@@ -93,11 +93,26 @@ def glob_match(path:str, pattern:str) -> bool:
     return re.match(re_pattern, path) is not None
 
 def send_email(config:DictConfig, html:str):
-    sender = config.email.sender
-    receiver = config.email.receiver
-    password = config.email.sender_password
-    smtp_server = config.email.smtp_server
-    smtp_port = config.email.smtp_port
+    sender = config.email.get("sender")
+    receiver = config.email.get("receiver")
+    password = config.email.get("sender_password")
+    if password:
+        password = password.strip()
+    smtp_server = config.email.get("smtp_server")
+    smtp_port = config.email.get("smtp_port")
+
+    if not all([sender, receiver, password, smtp_server, smtp_port]):
+        missing = [k for k, v in {
+            "sender": sender,
+            "receiver": receiver,
+            "password": "***" if password else None,
+            "smtp_server": smtp_server,
+            "smtp_port": smtp_port
+        }.items() if not v]
+        raise ValueError(f"Missing email configuration: {', '.join(missing)}")
+
+    logger.info(f"Preparing to send email to {receiver} via {smtp_server}:{smtp_port}")
+
     def _format_addr(s):
         name, addr = parseaddr(s)
         return formataddr((Header(name, 'utf-8').encode(), addr))
@@ -108,17 +123,31 @@ def send_email(config:DictConfig, html:str):
     today = datetime.datetime.now().strftime('%Y/%m/%d')
     msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
 
+    server = None
     try:
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-    except Exception as e:
-        logger.debug(f"Failed to use TLS. {e}\nTry to use SSL.")
-        try:
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port)
-        except Exception as e:
-            logger.debug(f"Failed to use SSL. {e}\nTry to use plain text.")
-            server = smtplib.SMTP(smtp_server, smtp_port)
+        if smtp_port == 465:
+            logger.debug(f"Connecting to {smtp_server}:{smtp_port} via SSL...")
+            server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30)
+        else:
+            logger.debug(f"Connecting to {smtp_server}:{smtp_port}...")
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+            server.ehlo()
+            if smtp_port == 587:
+                logger.debug("Starting TLS...")
+                server.starttls()
+                server.ehlo()
 
-    server.login(sender, password)
-    server.sendmail(sender, [receiver], msg.as_string())
-    server.quit()
+        logger.debug(f"Logging in as {sender}...")
+        server.login(sender, password)
+        logger.debug("Sending mail...")
+        server.sendmail(sender, [receiver], msg.as_string())
+        logger.info("Email sent successfully.")
+    except Exception as e:
+        logger.error(f"SMTP Error: {e}")
+        raise
+    finally:
+        if server:
+            try:
+                server.quit()
+            except:
+                pass
