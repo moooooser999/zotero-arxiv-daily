@@ -128,6 +128,7 @@ def send_email(config:DictConfig, html:str):
         if smtp_port == 465:
             logger.debug(f"Connecting to {smtp_server}:{smtp_port} via SSL...")
             server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30)
+            server.ehlo()
         else:
             logger.debug(f"Connecting to {smtp_server}:{smtp_port}...")
             server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
