@@ -124,31 +124,41 @@ def send_email(config:DictConfig, html:str):
     msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
 
     server = None
-    try:
-        if smtp_port == 465:
-            logger.debug(f"Connecting to {smtp_server}:{smtp_port} via SSL...")
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30)
-            server.ehlo()
-        else:
-            logger.debug(f"Connecting to {smtp_server}:{smtp_port}...")
-            server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if smtp_port == 465:
+                logger.debug(f"Attempt {attempt+1}: Connecting to {smtp_server}:{smtp_port} via SSL...")
+                server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30)
+            else:
+                logger.debug(f"Attempt {attempt+1}: Connecting to {smtp_server}:{smtp_port}...")
+                server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+
+            # Enable verbose debugging to capture the full conversation in GH Action logs
+            server.set_debuglevel(1)
+
             server.ehlo()
             if smtp_port == 587:
                 logger.debug("Starting TLS...")
                 server.starttls()
                 server.ehlo()
 
-        logger.debug(f"Logging in as {sender}...")
-        server.login(sender, password)
-        logger.debug("Sending mail...")
-        server.sendmail(sender, [receiver], msg.as_string())
-        logger.info("Email sent successfully.")
-    except Exception as e:
-        logger.error(f"SMTP Error: {e}")
-        raise
-    finally:
-        if server:
-            try:
-                server.quit()
-            except:
-                pass
+            logger.debug(f"Logging in as {sender}...")
+            server.login(sender, password)
+            logger.debug("Sending mail...")
+            server.sendmail(sender, [receiver], msg.as_string())
+            logger.info("Email sent successfully.")
+            return # Success!
+        except (smtplib.SMTPServerDisconnected, ConnectionError) as e:
+            logger.warning(f"Attempt {attempt+1} failed: {e}. Retrying...")
+            if attempt == max_retries - 1:
+                raise
+        except Exception as e:
+            logger.error(f"SMTP Error: {e}")
+            raise
+        finally:
+            if server:
+                try:
+                    server.quit()
+                except:
+                    pass
